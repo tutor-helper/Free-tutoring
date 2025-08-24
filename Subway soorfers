@@ -1,0 +1,164 @@
+<!doctype html><meta charset="utf-8"><title>Runner3D</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html,body{margin:0;height:100%;background:#0b0d10;color:#e8eef3;font-family:system-ui}
+  #wrap{max-width:960px;margin:0 auto;padding:10px}
+  #hud{display:flex;gap:14px;justify-content:center;align-items:center;margin:8px auto;color:#99a2ad}
+  #hud b{color:#e8eef3}
+  #bar{display:flex;gap:12px;justify-content:center;margin:6px 0}
+  button{background:#48c774;color:#06210f;border:none;border-radius:10px;padding:8px 12px;font-weight:600;cursor:pointer}
+  canvas{display:block;margin:0 auto;border-radius:14px;box-shadow:0 8px 28px rgba(0,0,0,.35),inset 0 0 0 1px rgba(255,255,255,.06)}
+  nav{padding:10px;background:#141a21;border-bottom:1px solid rgba(255,255,255,.08)}
+  nav a{color:#48c774;margin-right:12px;text-decoration:none}
+</style>
+<nav>
+  <a href="/">🏠 Home</a>
+  <a href="../runner3d/">Runner3D</a>
+  <a href="../dash3d/">Dash3D</a>
+  <a href="../blocks3d/">Blocks3D</a>
+</nav>
+<div id="wrap">
+  <div id="hud">Score: <b id="sc">0</b> • Best: <b id="best">0</b> • Left/Right to switch lanes • Space to jump</div>
+  <div id="bar"><button id="btn">Start / Pause</button></div>
+</div>
+<script type="module">
+import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+
+const wrap = document.getElementById('wrap');
+const scoreEl = document.getElementById('sc');
+const bestEl = document.getElementById('best'); bestEl.textContent = localStorage.getItem('runner3d_best')||0;
+const btn = document.getElementById('btn');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0f1318);
+const camera = new THREE.PerspectiveCamera(60, 16/9, 0.1, 200);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+wrap.appendChild(renderer.domElement);
+
+const hemi = new THREE.HemisphereLight(0xffffff, 0x202028, 1.2);
+scene.add(hemi);
+const dir = new THREE.DirectionalLight(0xffffff, 0.9); dir.position.set(5,8,5); scene.add(dir);
+
+// ground
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(30, 180, 1, 1), new THREE.MeshStandardMaterial({color:0x10161d}));
+ground.rotation.x = -Math.PI/2; ground.position.z = 50;
+scene.add(ground);
+
+// subtle lane lines
+const lineMat = new THREE.LineBasicMaterial({color:0xffffff, transparent:true, opacity:0.08});
+for (let x of [-6, -0, 6]) {
+  const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x,0, -10), new THREE.Vector3(x,0,110)]);
+  const line = new THREE.Line(geo, lineMat);
+  scene.add(line);
+}
+
+// player
+const ply = new THREE.Mesh(new THREE.BoxGeometry(1.4,1.4,1.4), new THREE.MeshStandardMaterial({color:0x48c774}));
+ply.position.set(0,0.7,0); scene.add(ply);
+
+// camera
+camera.position.set(0, 5.5, -8);
+camera.lookAt(0,1,6);
+
+// resize
+function resize(){
+  const w = Math.min(window.innerWidth*0.96, 960);
+  const h = w * 9/16;
+  renderer.setSize(w, h, false);
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  camera.aspect = w/h; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+
+// game state
+const lanes = [-6, 0, 6];
+let laneIdx = 1;
+let vy = 0, onGround = true;
+let running = false, gameOver = false;
+let speed = 0.35;
+let score = 0;
+const obstacles = [];
+const tmpBoxA = new THREE.Box3(), tmpBoxB = new THREE.Box3();
+
+// spawn obstacle
+function spawn(){
+  const x = lanes[Math.floor(Math.random()*3)];
+  const w = 1.6 + Math.random()*0.8, h = 1.2 + Math.random()*1.0, d = 1.6 + Math.random()*0.8;
+  const o = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), new THREE.MeshStandardMaterial({color:0xff5d5d}));
+  o.position.set(x, h/2, 90 + Math.random()*25);
+  scene.add(o); obstacles.push(o);
+}
+let spawnTimer = 0;
+
+// controls
+function startPause(){
+  if (gameOver){ reset(); running = true; return; }
+  running = !running;
+}
+btn.addEventListener('click', startPause);
+
+addEventListener('keydown', e=>{
+  const k = e.key.toLowerCase();
+  if(k===' ') { e.preventDefault(); if(gameOver){ reset(); running=true; } else running = !running; }
+  if(!running || gameOver) return;
+  if(k==='arrowleft' || k==='a'){ laneIdx = Math.max(0, laneIdx-1); }
+  if(k==='arrowright'|| k==='d'){ laneIdx = Math.min(2, laneIdx+1); }
+  if(k==='arrowup' || k==='w' || k===' ') { if(onGround){ vy = 0.42; onGround = false; } }
+});
+
+// reset
+function reset(){
+  for(const o of obstacles){ scene.remove(o); o.geometry.dispose(); o.material.dispose(); }
+  obstacles.length = 0;
+  ply.position.set(0,0.7,0);
+  laneIdx = 1; vy = 0; onGround = true; score = 0; speed = 0.35;
+  running = false; gameOver = false; scoreEl.textContent = score;
+}
+
+// step
+function tick(){
+  requestAnimationFrame(tick);
+
+  // smooth move to lane
+  ply.position.x += (lanes[laneIdx] - ply.position.x) * 0.2;
+
+  // gravity
+  if(running){
+    vy -= 0.018; // gravity
+    ply.position.y += vy;
+    if(ply.position.y <= 0.7){ ply.position.y = 0.7; vy = 0; onGround = true; }
+  }
+
+  // obstacles
+  if(running && !gameOver){
+    spawnTimer--; if(spawnTimer<=0){ spawn(); spawnTimer = 48 + Math.floor(Math.random()*30); }
+    for(const o of obstacles){
+      o.position.z -= speed*3.2;
+    }
+    // remove + score
+    while(obstacles.length && obstacles[0].position.z < -12){
+      const gone = obstacles.shift(); scene.remove(gone); gone.geometry.dispose(); gone.material.dispose();
+      score++; scoreEl.textContent = score;
+      if(score % 6 === 0) speed = Math.min(0.7, speed + 0.04);
+    }
+    // collision
+    tmpBoxA.setFromObject(ply);
+    for(const o of obstacles){
+      tmpBoxB.setFromObject(o);
+      if(tmpBoxA.intersectsBox(tmpBoxB)){
+        gameOver = true; running = false;
+        const best = Math.max(Number(localStorage.getItem('runner3d_best')||0), score);
+        localStorage.setItem('runner3d_best', best); bestEl.textContent = best;
+        break;
+      }
+    }
+  }
+
+  // keep ground under camera
+  ground.position.z -= speed*3.2 * (running?1:0);
+  if(ground.position.z < 0) ground.position.z += 50;
+
+  renderer.render(scene, camera);
+}
+reset(); tick();
+</script>
