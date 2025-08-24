@@ -1,0 +1,32 @@
+<!doctype html><meta charset="utf-8"><title>Dash3D</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html,body{margin:0;height:100%;background:#0b0d10;color:#e8eef3;font-family:system-ui}
+  #wrap{max-width:960px;margin:0 auto;padding:10px}
+  #hud{display:flex;gap:14px;justify-content:center;align-items:center;margin:8px auto;color:#99a2ad}
+  #hud b{color:#e8eef3}
+  #bar{display:flex;gap:12px;justify-content:center;margin:6px 0}
+  button{background:#48c774;color:#06210f;border:none;border-radius:10px;padding:8px 12px;font-weight:600;cursor:pointer}
+  canvas{display:block;margin:0 auto;border-radius:14px;box-shadow:0 8px 28px rgba(0,0,0,.35),inset 0 0 0 1px rgba(255,255,255,.06)}
+  nav{padding:10px;background:#141a21;border-bottom:1px solid rgba(255,255,255,.08)}
+  nav a{color:#48c774;margin-right:12px;text-decoration:none}
+</style>
+<nav>
+  <a href="/">🏠 Home</a>
+  <a href="../runner3d/">Runner3D</a>
+  <a href="../dash3d/">Dash3D</a>
+  <a href="../blocks3d/">Blocks3D</a>
+</nav>
+<div id="wrap">
+  <div id="hud">Distance: <b id="dist">0</b> • Space/Click = jump • Avoid spikes • Land on platforms</div>
+  <div id="bar"><button id="btn">Start / Pause</button></div>
+</div>
+<script type="module">
+import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+
+const wrap = document.getElementById('wrap');
+const distEl = document.getElementById('dist');
+const btn = document.getElementById('btn');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0
