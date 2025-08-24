@@ -1,0 +1,369 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Mini Battle 3D</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root{--bg:#0b0d10;--panel:#141a21;--fg:#e8eef3;--muted:#99a2ad;--ok:#48c774;--bad:#ff5d5d}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto}
+  nav{padding:10px;background:#141a21;border-bottom:1px solid rgba(255,255,255,.08)}
+  nav a{color:var(--ok);margin-right:12px;text-decoration:none}
+  #wrap{max-width:960px;margin:0 auto;padding:10px}
+  canvas{display:block;margin:8px auto;border-radius:14px;box-shadow:0 8px 28px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.06)}
+  #hud{position:fixed;left:50%;transform:translateX(-50%);top:10px;display:flex;gap:14px;align-items:center;background:rgba(20,26,33,.75);border:1px solid rgba(255,255,255,.08);padding:8px 12px;border-radius:12px;font-size:14px;backdrop-filter: blur(6px)}
+  #hud b{color:var(--fg)}
+  #hint{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;background:rgba(0,0,0,.55);padding:18px 22px;border-radius:14px;border:1px solid rgba(255,255,255,.1);max-width:90%}
+  #hint button{margin-top:10px;background:var(--ok);color:#06210f;border:none;border-radius:10px;padding:8px 12px;font-weight:600;cursor:pointer}
+  #cross{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:18px;height:18px;opacity:.7}
+  #cross:before,#cross:after{content:"";position:absolute;left:50%;top:50%;background:#e8eef3}
+  #cross:before{width:2px;height:18px;transform:translate(-50%,-50%)}
+  #cross:after{width:18px;height:2px;transform:translate(-50%,-50%)}
+  #reload{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);font-size:14px;color:var(--muted)}
+  .hpbar{width:120px;height:8px;background:#2a2f37;border-radius:999px;overflow:hidden;border:1px solid rgba(255,255,255,.08)}
+  .hp{height:100%;background:linear-gradient(90deg,#ff7b7b,var(--bad));width:100%}
+</style>
+<nav>
+  <a href="/">🏠 Home</a>
+  <a href="../runner3d/">Runner3D</a>
+  <a href="../dash3d/">Dash3D</a>
+  <a href="../battle3d/">Mini Battle 3D</a>
+</nav>
+<div id="wrap"></div>
+<div id="hud" aria-live="polite">
+  <span>Health:
+    <span class="hpbar"><span id="hp" class="hp"></span></span>
+  </span>
+  <span>Ammo: <b id="ammo">12</b></span>
+  <span>Score: <b id="score">0</b></span>
+</div>
+<div id="hint">
+  <h3 style="margin:0 0 6px 0">Mini Battle 3D</h3>
+  <div style="color:var(--muted);font-size:14px">
+    Click to play • <b>WASD</b> move • mouse to look • <b>Space</b> jump • <b>Click</b> shoot • <b>R</b> reload.
+    Avoid the red bots and tag them to score!
+  </div>
+  <button id="playBtn">Click to start</button>
+</div>
+<div id="cross" aria-hidden="true"></div>
+<div id="reload" hidden>Reloading…</div>
+
+<script type="module">
+import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+import { PointerLockControls } from "https://unpkg.com/three@0.160.0/examples/jsm/controls/PointerLockControls.js";
+
+const wrap = document.getElementById('wrap');
+const scoreEl = document.getElementById('score');
+const ammoEl  = document.getElementById('ammo');
+const hpEl    = document.getElementById('hp');
+const hint    = document.getElementById('hint');
+const playBtn = document.getElementById('playBtn');
+const reloadUI= document.getElementById('reload');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0f1318);
+scene.fog = new THREE.Fog(0x0f1318, 35, 140);
+
+const camera = new THREE.PerspectiveCamera(75, 16/9, 0.1, 250);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+wrap.appendChild(renderer.domElement);
+
+const hemi = new THREE.HemisphereLight(0xffffff, 0x202028, 1.2);
+scene.add(hemi);
+const dir = new THREE.DirectionalLight(0xffffff, 0.9);
+dir.position.set(20,30,-10);
+scene.add(dir);
+
+// ground island
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(80, 64),
+  new THREE.MeshStandardMaterial({color:0x10161d, roughness:0.95, metalness:0})
+);
+ground.rotation.x = -Math.PI/2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// perimeter posts
+const ringMat = new THREE.MeshStandardMaterial({color:0x1a242e, roughness:1});
+for(let i=0;i<16;i++){
+  const a = (i/16)*Math.PI*2;
+  const x = Math.cos(a)*75, z = Math.sin(a)*75;
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.4,0.4,4,12), ringMat);
+  post.position.set(x,2,z);
+  scene.add(post);
+}
+
+// cover blocks
+const colliders = [];
+const coverMat = new THREE.MeshStandardMaterial({color:0x182028, roughness:1});
+for(let i=0;i<12;i++){
+  const b = new THREE.Mesh(new THREE.BoxGeometry(4,3,4), coverMat);
+  // scatter within radius 60
+  const r = 20 + Math.random()*50, a = Math.random()*Math.PI*2;
+  b.position.set(Math.cos(a)*r, 1.5, Math.sin(a)*r);
+  scene.add(b); colliders.push(b);
+}
+
+// player controls
+const controls = new PointerLockControls(camera, renderer.domElement);
+scene.add(controls.getObject());
+camera.position.set(0, 1.6, 0);
+controls.getObject().position.set(0, 1.6, -10);
+
+let moveF=false, moveB=false, moveL=false, moveR=false, canJump=false;
+const velocity = new THREE.Vector3();
+const direction = new THREE.Vector3();
+const upVector = new THREE.Vector3(0,1,0);
+const clock = new THREE.Clock();
+
+function onKey(e,down){
+  switch(e.code){
+    case 'KeyW': case 'ArrowUp': moveF = down; break;
+    case 'KeyS': case 'ArrowDown': moveB = down; break;
+    case 'KeyA': case 'ArrowLeft': moveL = down; break;
+    case 'KeyD': case 'ArrowRight': moveR = down; break;
+    case 'Space':
+      if(down && canJump){ velocity.y += 6.5; canJump=false; }
+      break;
+    case 'KeyR':
+      if(down) reload();
+      break;
+  }
+}
+addEventListener('keydown', e=>onKey(e,true));
+addEventListener('keyup',   e=>onKey(e,false));
+
+// shooting
+let ammo = 12, magSize = 12, firing=false, fireCooldown=0;
+let reloading=false;
+
+function reload(){
+  if(reloading || ammo===magSize) return;
+  reloading = true; reloadUI.hidden=false;
+  setTimeout(()=>{ ammo = magSize; ammoEl.textContent = ammo; reloading=false; reloadUI.hidden=true; }, 900);
+}
+addEventListener('mousedown', e=>{
+  if(e.button===0) firing = true;
+});
+addEventListener('mouseup',   e=>{
+  if(e.button===0) firing = false;
+});
+
+function shoot(){
+  if(!controls.isLocked || reloading) return;
+  if(ammo<=0){ reload(); return; }
+  ammo--; ammoEl.textContent = ammo;
+
+  const ray = new THREE.Raycaster();
+  ray.setFromCamera(new THREE.Vector2(0,0), camera);
+  const targets = enemies.map(e=>e.mesh);
+  const hits = ray.intersectObjects(targets, false);
+  // muzzle flash line
+  const lineGeo = new THREE.BufferGeometry().setFromPoints([camera.position.clone(), camera.getWorldDirection(new THREE.Vector3()).multiplyScalar(50).add(camera.position)]);
+  const line = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({color:0xffffff, transparent:true, opacity:0.7}));
+  scene.add(line); setTimeout(()=>{ scene.remove(line); line.geometry.dispose(); line.material.dispose(); }, 50);
+
+  if(hits.length){
+    const m = hits[0].object;
+    const enemy = enemies.find(e=>e.mesh===m);
+    if(enemy){
+      enemy.hp -= 1;
+      hitEffect(hits[0].point);
+      if(enemy.hp<=0) { killEnemy(enemy); }
+    }
+  }
+}
+
+function hitEffect(pos){
+  const s = new THREE.Mesh(new THREE.SphereGeometry(0.25,12,12), new THREE.MeshBasicMaterial({color:0xffffff}));
+  s.position.copy(pos); scene.add(s);
+  setTimeout(()=>{ scene.remove(s); s.geometry.dispose(); s.material.dispose(); }, 120);
+}
+
+// enemies
+const enemies = [];
+function spawnEnemy(){
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.2,1.6,1.2), new THREE.MeshStandardMaterial({color:0xff5d5d}));
+  // place away from center (radius 25-60)
+  const r = 25 + Math.random()*35, a = Math.random()*Math.PI*2;
+  body.position.set(Math.cos(a)*r, 0.8, Math.sin(a)*r);
+  scene.add(body);
+  enemies.push({mesh:body, hp:3, spd: 2.4 + Math.random()*0.8, dir: new THREE.Vector3()});
+}
+function killEnemy(e){
+  score += 1; scoreEl.textContent = score;
+  scene.remove(e.mesh); e.mesh.geometry.dispose(); e.mesh.material.dispose();
+  const idx = enemies.indexOf(e); if(idx>-1) enemies.splice(idx,1);
+  // respawn after short delay
+  setTimeout(spawnEnemy, 600);
+}
+let score = 0;
+
+// player health
+let hp = 100;
+function setHP(v){
+  hp = Math.max(0, Math.min(100, v));
+  hpEl.style.width = hp + '%';
+  if(hp<=0) gameOver();
+}
+
+// state
+let playing = false;
+function start(){
+  playing = true;
+  hint.style.display='none';
+  controls.lock();
+  // ensure a few enemies exist
+  while(enemies.length<5) spawnEnemy();
+}
+controls.addEventListener('lock', ()=>{ /* locked */ });
+controls.addEventListener('unlock', ()=>{ if(playing) hint.style.display=''; });
+
+playBtn.addEventListener('click', start);
+renderer.domElement.addEventListener('click', ()=>{ if(!controls.isLocked && playing) controls.lock(); });
+
+// resize
+function resize(){
+  const w = Math.min(window.innerWidth*0.98, 960);
+  const h = w*9/16;
+  renderer.setSize(w,h,false);
+  camera.aspect = w/h; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+
+// simple collision vs island edge (keep within radius)
+function clampToIsland(pos){
+  const r = Math.hypot(pos.x, pos.z);
+  const maxR = 76;
+  if(r>maxR){
+    pos.x *= maxR/r;
+    pos.z *= maxR/r;
+  }
+}
+
+// AABB test utility
+const _box = new THREE.Box3(), _p = new THREE.Vector3();
+function collideWithCover(nextPos){
+  // very simple: if camera head inside a cover AABB, push back along normal
+  for(const c of colliders){
+    _box.setFromObject(c);
+    // treat player's body as small box around eyes
+    const playerBox = new THREE.Box3(
+      new THREE.Vector3(nextPos.x-0.3, nextPos.y-1.6, nextPos.z-0.3),
+      new THREE.Vector3(nextPos.x+0.3, nextPos.y,     nextPos.z+0.3)
+    );
+    if(playerBox.intersectsBox(_box)){
+      // push out along the smallest penetration axis
+      const dx1 = Math.abs(playerBox.max.x - _box.min.x);
+      const dx2 = Math.abs(_box.max.x - playerBox.min.x);
+      const dz1 = Math.abs(playerBox.max.z - _box.min.z);
+      const dz2 = Math.abs(_box.max.z - playerBox.min.z);
+      const minPen = Math.min(dx1,dx2,dz1,dz2);
+      if(minPen===dx1) nextPos.x = _box.min.x - 0.31;
+      else if(minPen===dx2) nextPos.x = _box.max.x + 0.31;
+      else if(minPen===dz1) nextPos.z = _box.min.z - 0.31;
+      else nextPos.z = _box.max.z + 0.31;
+    }
+  }
+}
+
+function updateMovement(delta){
+  if(!controls.isLocked) return;
+
+  // friction
+  velocity.x -= velocity.x * 8.0 * delta;
+  velocity.z -= velocity.z * 8.0 * delta;
+  velocity.y -= 20.0 * delta; // gravity
+
+  direction.z = Number(moveF) - Number(moveB);
+  direction.x = Number(moveR) - Number(moveL);
+  direction.normalize();
+
+  const speed = 24;
+  if(moveF || moveB) velocity.z -= direction.z * speed * delta;
+  if(moveL || moveR) velocity.x -= direction.x * speed * delta;
+
+  // proposed next position
+  const obj = controls.getObject();
+  const next = obj.position.clone();
+
+  // forward/back (local)
+  const forward = new THREE.Vector3();
+  controls.getDirection(forward);
+  forward.y = 0; forward.normalize();
+
+  const right = new THREE.Vector3().crossVectors(forward, upVector).negate();
+
+  next.add(forward.multiplyScalar(-velocity.z * delta));
+  next.add(right.multiplyScalar(-velocity.x * delta));
+  next.y += velocity.y * delta;
+
+  // ground
+  if(next.y < 1.6){
+    velocity.y = 0; next.y = 1.6; canJump = true;
+  }
+
+  // collisions & bounds
+  collideWithCover(next);
+  clampToIsland(next);
+
+  obj.position.copy(next);
+}
+
+function updateEnemies(delta){
+  const playerPos = controls.getObject().position;
+  enemies.forEach(e=>{
+    // move toward player
+    const toP = e.mesh.position.clone().sub(playerPos);
+    toP.y = 0; const d = toP.length();
+    if(d>1){
+      toP.normalize();
+      // step opposite (toward player)
+      e.mesh.position.addScaledVector(toP, -e.spd*delta);
+    }
+    // nibble damage if close
+    if(d < 1.6){
+      setHP(hp - 18*delta); // DPS near enemy
+    }
+  });
+}
+
+function gameOver(){
+  playing = false;
+  hint.style.display='';
+  hint.querySelector('h3').textContent = "Game Over";
+  hint.querySelector('div').innerHTML = "Score: <b>"+score+"</b><br/>Click to play again.";
+  // reset state
+  enemies.splice(0).forEach(killEnemy);
+  score = 0; scoreEl.textContent = 0;
+  ammo = magSize; ammoEl.textContent = ammo;
+  setHP(100);
+}
+
+function animate(){
+  const delta = Math.min(0.05, clock.getDelta());
+  updateMovement(delta);
+
+  // auto-fire if holding mouse
+  fireCooldown -= delta;
+  if(firing && fireCooldown<=0){
+    fireCooldown = 0.12; // ~8 shots/sec
+    shoot();
+  }
+
+  if(playing) updateEnemies(delta);
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(animate);
+}
+animate();
+
+// initial size
+(function init(){
+  const w = Math.min(window.innerWidth*0.98, 960);
+  const h = w*9/16;
+  renderer.setSize(w,h,false);
+  camera.aspect = w/h; camera.updateProjectionMatrix();
+  ammoEl.textContent = ammo;
+  setHP(100);
+})();
+</script>
